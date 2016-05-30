@@ -78,10 +78,10 @@ void initialize(){
 		M[i][1].LRU = -1;
 
 		for(k = 0; k < 1024; k++){
-			memset(&C[i][k][0], 0, sizeof(CEntry));
-			memset(&C[i][k][1], 0, sizeof(CEntry));
 			C[i][k][0].MRU = -1;
-			C[i][k][0].MRU = -1;
+			C[i][k][1].MRU = -1;
+			C[i][k][0].tag = -1;
+			C[i][k][1].tag = -1;
 		}
 	}
 }
@@ -125,7 +125,13 @@ int check_PTE(int VPN, int ID){
 		P_miss[ID]++;
 		int i, min = -1;
 		for(i = 0; i < M_size[ID]; i++){
-			if(min == -1 || M[i][ID].LRU < M[min][ID].LRU)
+			if(M[i][ID].LRU == -1){ // update M and P
+				M[i][ID].LRU = cycle;
+				P[VPN][ID].PPN = i;
+				P[VPN][ID].valid = 1;
+				update_TLB(VPN, ID);
+				return P[VPN][ID].PPN;
+			} else if(min == -1 || M[i][ID].LRU < M[min][ID].LRU)
 				min = i;
 		}
 		M[min][ID].LRU = cycle; // min as new PPN
@@ -141,12 +147,14 @@ int check_PTE(int VPN, int ID){
 				break;
 			}
 		
-		for(i = 0; i < C_col[ID]; i++){
+		for(i = 0; i < Page_size[ID]; i++){
 			int PA = min * Page_size[ID] + i;
 			int index = PA / C_block[ID] % C_row[ID];
 			int tag = PA / C_block[ID] / C_row[ID];
-			if(C[index][i][ID].tag == tag)
-				C[index][i][ID].MRU = -1; // invalid
+			int k;
+			for(k = 0; k < C_col[ID]; k++)
+				if(C[index][k][ID].tag == tag)
+					C[index][k][ID].MRU = -1; // invalid
 		}
 		
 		//update tlb and pte
@@ -165,15 +173,29 @@ void swap_MRU(int index, int ID, int swap){
 		C[index][i][ID].MRU = (i == swap) ? 1 : 0;
 }
 
+void print_cache(int ID){
+	int i, k;
+	for(i = 0; i < C_row[ID]; i++){
+		for(k = 0; k < C_col[ID]; k++)
+			printf("%4d%4d  ", C[i][k][ID].MRU, C[i][k][ID].tag);
+		printf("\n");
+	}
+	printf("\n");
+}
+
 void check_Cache(int PA, int VPN, int ID){
 	int index = PA / C_block[ID] % C_row[ID];
 	int tag = PA / C_block[ID] / C_row[ID];
+	if(ID)printf("%d %d\n", index, tag);
 	int i;
+	
 	for(i = 0; i < C_col[ID]; i++){
 		if(C[index][i][ID].MRU != -1 && C[index][i][ID].tag == tag){ // hit
 			C[index][i][ID].MRU = 1;
 			swap_MRU(index, ID, i);
 			C_hits[ID]++;
+			if(ID)printf("hit : %d\n", tag);
+			if(ID)print_cache(ID);
 			return;
 		}
 	}
@@ -181,6 +203,14 @@ void check_Cache(int PA, int VPN, int ID){
 	
 	C_miss[ID]++;
 	int swap;
+	if(C_col[ID] == 1){ // special case (can't use bit pseudo lru)
+		C[index][0][ID].tag = tag;
+		C[index][0][ID].MRU = 1;
+		if(ID)printf("miss : %d\n", tag);
+		if(ID)print_cache(ID);
+		return;
+	}
+	
 	for(i = 0; i < C_col[ID]; i++){
 		if(C[index][i][ID].MRU < 1){
 			swap = i;
@@ -188,19 +218,7 @@ void check_Cache(int PA, int VPN, int ID){
 		}
 	}
 
-	/*if(ID == 0){
-		printf("MRU:\n");
-		int k;
-		for(i = 0; i < C_row[ID]; i++){
-			for(k = 0; k < C_col[ID]; k++)
-				printf("%4d", C[i][k][ID].MRU);
-			printf("\n");
-			for(k = 0; k < C_col[ID]; k++)
-				printf("%4d", C[i][k][ID].tag);
-			printf("\n");
-		}
-		printf("\n");
-	}*/
+
 
 	C[index][swap][ID].tag = tag;
 	C[index][swap][ID].MRU = 1;
@@ -211,7 +229,7 @@ void check_Cache(int PA, int VPN, int ID){
 void vm(int VA, int ID){
 	int VPN = VA / Page_size[ID];
 	int PPN = check_TLB(VPN, ID);
-	int PA = PPN * Page_size[ID] + VPN % Page_size[ID];
+	int PA = PPN * Page_size[ID] + VA % Page_size[ID];
 	check_Cache(PA, VPN, ID);
 }
 

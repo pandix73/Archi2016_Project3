@@ -186,7 +186,6 @@ void print_cache(int ID){
 void check_Cache(int PA, int VPN, int ID){
 	int index = PA / C_block[ID] % C_row[ID];
 	int tag = PA / C_block[ID] / C_row[ID];
-	if(ID)printf("%d %d\n", index, tag);
 	int i;
 	
 	for(i = 0; i < C_col[ID]; i++){
@@ -194,8 +193,6 @@ void check_Cache(int PA, int VPN, int ID){
 			C[index][i][ID].MRU = 1;
 			swap_MRU(index, ID, i);
 			C_hits[ID]++;
-			if(ID)printf("hit : %d\n", tag);
-			if(ID)print_cache(ID);
 			return;
 		}
 	}
@@ -206,8 +203,6 @@ void check_Cache(int PA, int VPN, int ID){
 	if(C_col[ID] == 1){ // special case (can't use bit pseudo lru)
 		C[index][0][ID].tag = tag;
 		C[index][0][ID].MRU = 1;
-		if(ID)printf("miss : %d\n", tag);
-		if(ID)print_cache(ID);
 		return;
 	}
 	
@@ -440,7 +435,7 @@ void read_i_memory(){
 				}
 				break;
 		}
-
+		reg[0] = 0; // write 0 error
 		fprintf(snap, "cycle %d\n", cycle++);
 		int reg_n;
 		for(reg_n = 0; reg_n < 32; reg_n++){
@@ -467,7 +462,7 @@ int main (int argc, char *args[]) {
         C_size[0] = atoi(args[5]);
         C_block[0] = atoi(args[6]);
         C_associate[0] = atoi(args[7]);
-        C_block[1] = atoi(args[8]);
+        C_size[1] = atoi(args[8]);
         C_block[1] = atoi(args[9]);
         C_associate[1] = atoi(args[10]);
     } else {
@@ -485,12 +480,12 @@ int main (int argc, char *args[]) {
 	fseek (i_file , 0 , SEEK_END);
 	fseek (d_file , 0 , SEEK_END);
 	i_size = ftell(i_file);
-	if(i_size > 1026)i_size = 1026;
+	if(i_size > 1026*4)i_size = 1026*4;
 	d_size = ftell(d_file);
-	if(d_size > 1026)d_size = 1026;
+	if(d_size > 1026*4)d_size = 1026*4;
 	rewind(i_file);
 	rewind(d_file);
-
+	printf("%d %d\n", i_size, d_size);
 	// copy the file into the buffer:
 	i_result = fread(i_memory, 4, i_size/4, i_file);
 	d_result = fread(d_data  , 4, d_size/4, d_file);

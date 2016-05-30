@@ -39,8 +39,7 @@ typedef struct _PEntry{ // VPN as index
 
 typedef struct _CEntry{
 	int tag;
-	int valid;
-	int MRU;
+	int MRU; // -1 for invalid
 }CEntry;
 
 typedef struct _MEntry{
@@ -69,31 +68,35 @@ void initialize(){
 	for(i = 0; i < 1024; i++){
 		memset(&T[i][0], 0, sizeof(TEntry));
 		memset(&T[i][1], 0, sizeof(TEntry));
+		T[i][0].LRU = -1;
+		T[i][1].LRU = -1;
+
 		memset(&P[i][0], 0, sizeof(PEntry));
 		memset(&P[i][1], 0, sizeof(PEntry));
-		memset(&M[i][0], 0, sizeof(MEntry));
-		memset(&M[i][1], 0, sizeof(MEntry));
+		
+		M[i][0].LRU = -1;
+		M[i][1].LRU = -1;
+
 		for(k = 0; k < 1024; k++){
 			memset(&C[i][k][0], 0, sizeof(CEntry));
 			memset(&C[i][k][1], 0, sizeof(CEntry));
+			C[i][k][0].MRU = -1;
+			C[i][k][0].MRU = -1;
 		}
 	}
 }
 
 
 int check_TLB(int VPN, int ID){
-	//if(!ID)printf("%d->", T_miss[0] + T_hits[0]);
 	int i;
 	for(i = 0; i < T_size[ID]; i++){
-		if(T[i][ID].VPN == VPN){ // hit
+		if(T[i][ID].VPN == VPN && T[i][ID].LRU != -1){ // hit
 			T_hits[ID]++;
-			//if(!ID)printf("%d\n\n", T_miss[0] + T_hits[0]);
 			T[i][ID].LRU = cycle;
 			return T[i][ID].PPN;
 		}
 	}
 	T_miss[ID]++;
-	//if(!ID)printf("%d\n\n", T_miss[0] + T_hits[0]);
 	return check_PTE(VPN, ID);
 }
 
@@ -137,6 +140,15 @@ int check_PTE(int VPN, int ID){
 				T[i][ID].LRU = -1;
 				break;
 			}
+		
+		for(i = 0; i < C_col[ID]; i++){
+			int PA = min * Page_size[ID] + i;
+			int index = PA / C_block[ID] % C_row[ID];
+			int tag = PA / C_block[ID] / C_row[ID];
+			if(C[index][i][ID].tag == tag)
+				C[index][i][ID].MRU = -1; // invalid
+		}
+		
 		//update tlb and pte
 		P[VPN][ID].PPN = min; 
 		P[VPN][ID].valid = 1;
@@ -145,12 +157,22 @@ int check_PTE(int VPN, int ID){
 	}
 }
 
+void swap_MRU(int index, int ID, int swap){
+	int i;
+	for(i = 0; i < C_col[ID]; i++)
+		if(C[index][i][ID].MRU != 1)return;
+	for(i = 0; i < C_col[ID]; i++)
+		C[index][i][ID].MRU = (i == swap) ? 1 : 0;
+}
+
 void check_Cache(int PA, int VPN, int ID){
 	int index = PA / C_block[ID] % C_row[ID];
 	int tag = PA / C_block[ID] / C_row[ID];
 	int i;
 	for(i = 0; i < C_col[ID]; i++){
-		if(C[index][i][ID].valid == 1 && C[index][i][ID].tag == tag){ // hit
+		if(C[index][i][ID].MRU != -1 && C[index][i][ID].tag == tag){ // hit
+			C[index][i][ID].MRU = 1;
+			swap_MRU(index, ID, i);
 			C_hits[ID]++;
 			return;
 		}
@@ -158,44 +180,39 @@ void check_Cache(int PA, int VPN, int ID){
 	//miss
 	
 	C_miss[ID]++;
-	int swap_valid = -1; // by valid
-	int swap_MRU = -1; // by MRU
-	int trans = 1;
+	int swap;
 	for(i = 0; i < C_col[ID]; i++){
-		if(C[index][i][ID].valid == 0 && swap_valid == -1)
-			swap_valid = i;
-		if(C[index][i][ID].MRU == 0 && swap_MRU == -1)
-			swap_MRU = i;
+		if(C[index][i][ID].MRU < 1){
+			swap = i;
+			break;
+		}
 	}
-	int swap = (swap_valid == -1) ? swap_MRU : swap_valid;
-	
-	for(i = 0; i < C_col[ID]; i++)
-		if(i != swap && C[index][i][ID].MRU == 0)
-			trans = 0;
-	if(trans == 1)
-		for(i = 0; i < C_col[ID]; i++)
-			if(i != swap)
-				C[index][i][ID].MRU = 0;
-	printf("MRU:");
-	for(i = 0; i < C_col[ID]; i++)
-		printf("%d ", C[index][i][ID].MRU);
-	printf("\n");
-	
+
+	/*if(ID == 0){
+		printf("MRU:\n");
+		int k;
+		for(i = 0; i < C_row[ID]; i++){
+			for(k = 0; k < C_col[ID]; k++)
+				printf("%4d", C[i][k][ID].MRU);
+			printf("\n");
+			for(k = 0; k < C_col[ID]; k++)
+				printf("%4d", C[i][k][ID].tag);
+			printf("\n");
+		}
+		printf("\n");
+	}*/
+
 	C[index][swap][ID].tag = tag;
-	printf("%d %d %d %d\n", index, swap, ID, tag);
-	C[index][swap][ID].valid = 1;
-	C[index][swap][ID].MRU = (C_col[ID] == 1) ? 0 : 1;
+	C[index][swap][ID].MRU = 1;
+	swap_MRU(index, ID, swap);
 	return;
 }
 
 void vm(int VA, int ID){
-	//printf("%c, %d\n", (ID == 0) ? 'I' : 'D', VA);
 	int VPN = VA / Page_size[ID];
 	int PPN = check_TLB(VPN, ID);
 	int PA = PPN * Page_size[ID] + VPN % Page_size[ID];
-	//if(!ID)printf("%d -> ", C_miss[0] + C_hits[0]);
 	check_Cache(PA, VPN, ID);
-	//if(!ID)printf("%d\n\n", C_miss[0] + C_hits[0]);
 }
 
 void print_vm(){
@@ -460,8 +477,8 @@ int main (int argc, char *args[]) {
 	i_result = fread(i_memory, 4, i_size/4, i_file);
 	d_result = fread(d_data  , 4, d_size/4, d_file);
 	
-	P_size[0] = (i_size-2) / Page_size[0];
-	P_size[1] = (d_size-2) / Page_size[1];
+	P_size[0] = 1024 / Page_size[0];
+	P_size[1] = 1024 / Page_size[1];
 	T_size[0] = P_size[0] / 4;
 	T_size[1] = P_size[1] / 4;
 	C_row[0] = C_size[0] / C_associate[0] / C_block[0];

@@ -29,7 +29,7 @@ int check_PTE(int VPN, int ID);
 typedef struct _TEntry{
 	int VPN;
 	int PPN;
-	int LRU; // least recently use, -1 for invalid
+	int LRU; // least recently use, 0 for invalid
 }TEntry;
 
 typedef struct _PEntry{ // VPN as index
@@ -39,11 +39,13 @@ typedef struct _PEntry{ // VPN as index
 
 typedef struct _CEntry{
 	int tag;
-	int MRU; // -1 for invalid
+	int MRU; 
+	int valid;
 }CEntry;
 
 typedef struct _MEntry{
-	int LRU;
+	int LRU; 
+	int valid;
 }MEntry;
 
 TEntry T[1024][2];
@@ -68,29 +70,41 @@ void initialize(){
 	for(i = 0; i < 1024; i++){
 		memset(&T[i][0], 0, sizeof(TEntry));
 		memset(&T[i][1], 0, sizeof(TEntry));
-		T[i][0].LRU = -1;
-		T[i][1].LRU = -1;
 
 		memset(&P[i][0], 0, sizeof(PEntry));
 		memset(&P[i][1], 0, sizeof(PEntry));
 		
-		M[i][0].LRU = -1;
-		M[i][1].LRU = -1;
+		memset(&M[i][0], 0, sizeof(MEntry));
+		memset(&M[i][1], 0, sizeof(MEntry));
 
 		for(k = 0; k < 1024; k++){
-			C[i][k][0].MRU = -1;
-			C[i][k][1].MRU = -1;
+			memset(&C[i][k][0], 0, sizeof(CEntry));
+			memset(&C[i][k][1], 0, sizeof(CEntry));
 			C[i][k][0].tag = -1;
 			C[i][k][1].tag = -1;
 		}
 	}
 }
 
+void print_TLB(int ID){
+	int i;
+	for(i = 0; i < T_size[ID]; i++){
+		printf("%3d", T[i][ID].VPN);
+	}printf("\n");
+	for(i = 0; i < T_size[ID]; i++){
+		printf("%3d", T[i][ID].PPN);
+	}printf("\n");
+	for(i = 0; i < T_size[ID]; i++){
+		printf("%3d", T[i][ID].LRU);
+	}printf("\n\n");
+}
+
 
 int check_TLB(int VPN, int ID){
 	int i;
+	//if(!ID)print_TLB(ID);
 	for(i = 0; i < T_size[ID]; i++){
-		if(T[i][ID].VPN == VPN && T[i][ID].LRU != -1){ // hit
+		if(T[i][ID].VPN == VPN && T[i][ID].LRU != 0){ // tlb hit
 			T_hits[ID]++;
 			T[i][ID].LRU = cycle;
 			return T[i][ID].PPN;
@@ -104,10 +118,10 @@ void update_TLB(int VPN, int ID){
 	int i;
 	int min = -1;
 	for(i = 0; i < T_size[ID]; i++){ // update T
-		if(T[i][ID].LRU == -1){
+		if(T[i][ID].LRU == 0){ // invalid case
 			min = i;
 			break;
-		} else if(min == -1 || T[min][ID].LRU > T[i][ID].LRU){
+		} else if(min == -1 || T[i][ID].LRU < T[min][ID].LRU){
 			min = i;
 		}
 	}
@@ -120,41 +134,49 @@ int check_PTE(int VPN, int ID){
 	if(P[VPN][ID].valid == 1){ // hit
 		P_hits[ID]++;
 		update_TLB(VPN, ID);
-		return P[VPN][ID].PPN;
+		int PPN = P[VPN][ID].PPN;
+		M[PPN][ID].LRU = cycle;
+		return PPN;
 	} else { // miss
 		P_miss[ID]++;
 		int i, min = -1;
 		for(i = 0; i < M_size[ID]; i++){
-			if(M[i][ID].LRU == -1){ // update M and P
+			if(M[i][ID].valid == 0){ // update M and P
 				M[i][ID].LRU = cycle;
+				M[i][ID].valid = 1;
 				P[VPN][ID].PPN = i;
 				P[VPN][ID].valid = 1;
 				update_TLB(VPN, ID);
 				return P[VPN][ID].PPN;
-			} else if(min == -1 || M[i][ID].LRU < M[min][ID].LRU)
+			} else if(min == -1 || M[i][ID].LRU < M[min][ID].LRU){
 				min = i;
+			}
 		}
 		M[min][ID].LRU = cycle; // min as new PPN
 		// delete original tlb and pte
 		for(i = 0; i < P_size[ID]; i++)
-			if(P[i][ID].PPN == min){
+			if(P[i][ID].PPN == min)
 				P[i][ID].valid = 0;
-				break;
-			}
+			
 		for(i = 0; i < T_size[ID]; i++)
-			if(T[i][ID].PPN == min){
-				T[i][ID].LRU = -1;
-				break;
-			}
-		
+			if(T[i][ID].PPN == min)
+				T[i][ID].LRU = 0;
+		//delete cache
 		for(i = 0; i < Page_size[ID]; i++){
 			int PA = min * Page_size[ID] + i;
 			int index = PA / C_block[ID] % C_row[ID];
 			int tag = PA / C_block[ID] / C_row[ID];
-			int k;
-			for(k = 0; k < C_col[ID]; k++)
-				if(C[index][k][ID].tag == tag)
-					C[index][k][ID].MRU = -1; // invalid
+			if(C_col[ID] == 1){
+				if(C[index][0][ID].tag == tag)
+					C[index][0][ID].valid = 0;
+			} else {
+				int k;
+				for(k = 0; k < C_col[ID]; k++)
+					if(C[index][k][ID].tag == tag && C[index][k][ID].valid == 1){
+						C[index][k][ID].MRU = 0; // invalid
+						C[index][k][ID].valid = 0;
+					}
+			}
 		}
 		
 		//update tlb and pte
@@ -177,7 +199,7 @@ void print_cache(int ID){
 	int i, k;
 	for(i = 0; i < C_row[ID]; i++){
 		for(k = 0; k < C_col[ID]; k++)
-			printf("%4d%4d  ", C[i][k][ID].MRU, C[i][k][ID].tag);
+			printf("%4d:%4d  ", C[i][k][ID].MRU, C[i][k][ID].tag);
 		printf("\n");
 	}
 	printf("\n");
@@ -187,9 +209,12 @@ void check_Cache(int PA, int VPN, int ID){
 	int index = PA / C_block[ID] % C_row[ID];
 	int tag = PA / C_block[ID] / C_row[ID];
 	int i;
-	
+	/*if(!ID){
+		print_cache(ID);
+		printf("insert %d in %d, cycle = %d\n", tag, index, cycle);
+	}*/
 	for(i = 0; i < C_col[ID]; i++){
-		if(C[index][i][ID].MRU != -1 && C[index][i][ID].tag == tag){ // hit
+		if(C[index][i][ID].valid == 1 && C[index][i][ID].tag == tag){ // hit
 			C[index][i][ID].MRU = 1;
 			swap_MRU(index, ID, i);
 			C_hits[ID]++;
@@ -199,29 +224,32 @@ void check_Cache(int PA, int VPN, int ID){
 	//miss
 	
 	C_miss[ID]++;
-	int swap;
+	int swap = -1;
 	if(C_col[ID] == 1){ // special case (can't use bit pseudo lru)
 		C[index][0][ID].tag = tag;
 		C[index][0][ID].MRU = 1;
+		C[index][0][ID].valid = 1;
 		return;
 	}
 	
 	for(i = 0; i < C_col[ID]; i++){
-		if(C[index][i][ID].MRU < 1){
+		if(C[index][i][ID].valid == 0){
 			swap = i;
 			break;
+		} else if(swap == -1 && C[index][i][ID].MRU == 0){
+			swap = i;
 		}
 	}
 
-
-
 	C[index][swap][ID].tag = tag;
 	C[index][swap][ID].MRU = 1;
+	C[index][swap][ID].valid = 1;
 	swap_MRU(index, ID, swap);
 	return;
 }
 
 void vm(int VA, int ID){
+	//if(!ID)printf("%d\n", VA);
 	int VPN = VA / Page_size[ID];
 	int PPN = check_TLB(VPN, ID);
 	int PA = PPN * Page_size[ID] + VA % Page_size[ID];
@@ -289,7 +317,8 @@ void read_i_memory(){
 	}fprintf(snap, "PC: 0x%08X\n\n\n", PC);
 	
 	for(i = 2; i < 2+i_memory[1]; i = ((PC-i_memory[0]) >> 2) + 2){
-		vm((i - 2) * 4, 0);
+		//printf("cycle:%d  use:%d\n", cycle, (i-2)*4/Page_size[0]);
+		vm(PC, 0);
 		opcode = i_memory[i] >> 26;
 		PC = PC + 4;
 		int w0error = 0;
@@ -443,6 +472,7 @@ void read_i_memory(){
 		}fprintf(snap, "PC: 0x%08X\n\n\n", PC);
 		
 		while(PC < i_memory[0]){
+			vm(PC, 0);
 			PC += 4;
 			fprintf(snap, "cycle %d\n", cycle++);
 			for(reg_n = 0; reg_n < 32; reg_n++){
@@ -480,9 +510,9 @@ int main (int argc, char *args[]) {
 	fseek (i_file , 0 , SEEK_END);
 	fseek (d_file , 0 , SEEK_END);
 	i_size = ftell(i_file);
-	if(i_size > 1026*4)i_size = 1026*4;
+	if(i_size > 1032)i_size = 1032;
 	d_size = ftell(d_file);
-	if(d_size > 1026*4)d_size = 1026*4;
+	if(d_size > 1032)d_size = 1032;
 	rewind(i_file);
 	rewind(d_file);
 	printf("%d %d\n", i_size, d_size);
@@ -501,6 +531,9 @@ int main (int argc, char *args[]) {
 	M_size[0] = MEM_size[0] / Page_size[0];
 	M_size[1] = MEM_size[1] / Page_size[1];
 	
+	printf("%d %d %d %d %d\n", P_size[0], T_size[0], C_row[0], C_col[0], M_size[0]);
+	printf("%d %d %d %d %d\n", P_size[1], T_size[1], C_row[1], C_col[1], M_size[1]);
+
 	initialize();
 	read_d_memory(); 
 	read_i_memory();

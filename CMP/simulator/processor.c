@@ -86,20 +86,6 @@ void initialize(){
 	}
 }
 
-void print_TLB(int ID){
-	int i;
-	for(i = 0; i < T_size[ID]; i++){
-		printf("%3d", T[i][ID].VPN);
-	}printf("\n");
-	for(i = 0; i < T_size[ID]; i++){
-		printf("%3d", T[i][ID].PPN);
-	}printf("\n");
-	for(i = 0; i < T_size[ID]; i++){
-		printf("%3d", T[i][ID].LRU);
-	}printf("\n\n");
-}
-
-
 int check_TLB(int VPN, int ID){
 	int i;
 	for(i = 0; i < T_size[ID]; i++){
@@ -190,16 +176,6 @@ void swap_MRU(int index, int ID, int swap){
 		if(C[index][i][ID].MRU != 1) return; // no need to swap
 	for(i = 0; i < C_col[ID]; i++)
 		C[index][i][ID].MRU = (i == swap) ? 1 : 0; // swap
-}
-
-void print_cache(int ID){
-	int i, k;
-	for(i = 0; i < C_row[ID]; i++){
-		for(k = 0; k < C_col[ID]; k++)
-			printf("%4d:%4d  ", C[i][k][ID].MRU, C[i][k][ID].tag);
-		printf("\n");
-	}
-	printf("\n");
 }
 
 void check_Cache(int PA, int VPN, int ID){
@@ -506,7 +482,6 @@ int main (int argc, char *args[]) {
 	if(d_size > 1032)d_size = 1032;
 	rewind(i_file);
 	rewind(d_file);
-	printf("%d %d\n", i_size, d_size);
 	// copy the file into the buffer:
 	i_result = fread(i_memory, 4, i_size/4, i_file);
 	d_result = fread(d_data  , 4, d_size/4, d_file);
@@ -522,9 +497,6 @@ int main (int argc, char *args[]) {
 	M_size[0] = MEM_size[0] / Page_size[0];
 	M_size[1] = MEM_size[1] / Page_size[1];
 	
-	printf("%d %d %d %d %d\n", P_size[0], T_size[0], C_row[0], C_col[0], M_size[0]);
-	printf("%d %d %d %d %d\n", P_size[1], T_size[1], C_row[1], C_col[1], M_size[1]);
-
 	initialize();
 	read_d_memory(); 
 	read_i_memory();
@@ -539,5 +511,3 @@ int main (int argc, char *args[]) {
 	free(d_buffer);
 	return 0;
 }
-
-

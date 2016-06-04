@@ -26,7 +26,7 @@ int check_PTE(int VPN, int ID);
 
 
 // CMP
-typedef struct _TEntry{
+typedef struct _TEntry{ // VPN -> PPN
 	int VPN;
 	int PPN;
 	int LRU; // least recently use, 0 for invalid
@@ -102,14 +102,13 @@ void print_TLB(int ID){
 
 int check_TLB(int VPN, int ID){
 	int i;
-	//if(!ID)print_TLB(ID);
 	for(i = 0; i < T_size[ID]; i++){
 		if(T[i][ID].VPN == VPN && T[i][ID].LRU != 0){ // tlb hit
 			T_hits[ID]++;
 			T[i][ID].LRU = cycle;
 			return T[i][ID].PPN;
 		}
-	}
+	} // tlb miss
 	T_miss[ID]++;
 	return check_PTE(VPN, ID);
 }
@@ -117,8 +116,8 @@ int check_TLB(int VPN, int ID){
 void update_TLB(int VPN, int ID){
 	int i;
 	int min = -1;
-	for(i = 0; i < T_size[ID]; i++){ // update T
-		if(T[i][ID].LRU == 0){ // invalid case
+	for(i = 0; i < T_size[ID]; i++){ // use LRU
+		if(T[i][ID].LRU == 0){ // invalid entry, use it directly
 			min = i;
 			break;
 		} else if(min == -1 || T[i][ID].LRU < T[min][ID].LRU){
@@ -135,13 +134,13 @@ int check_PTE(int VPN, int ID){
 		P_hits[ID]++;
 		update_TLB(VPN, ID);
 		int PPN = P[VPN][ID].PPN;
-		M[PPN][ID].LRU = cycle;
+		M[PPN][ID].LRU = cycle; // update MEM
 		return PPN;
 	} else { // miss
 		P_miss[ID]++;
 		int i, min = -1;
-		for(i = 0; i < M_size[ID]; i++){
-			if(M[i][ID].valid == 0){ // update M and P
+		for(i = 0; i < M_size[ID]; i++){ // use LRU
+			if(M[i][ID].valid == 0){ // invalid entry, use it directly
 				M[i][ID].LRU = cycle;
 				M[i][ID].valid = 1;
 				P[VPN][ID].PPN = i;
@@ -152,21 +151,20 @@ int check_PTE(int VPN, int ID){
 				min = i;
 			}
 		}
-		M[min][ID].LRU = cycle; // min as new PPN
-		// delete original tlb and pte
+		M[min][ID].LRU = cycle; // use min as new PPN, update MEM LRU
+		// delete original tlb and pte that use min
 		for(i = 0; i < P_size[ID]; i++)
 			if(P[i][ID].PPN == min)
-				P[i][ID].valid = 0;
-			
+				P[i][ID].valid = 0;		
 		for(i = 0; i < T_size[ID]; i++)
 			if(T[i][ID].PPN == min)
 				T[i][ID].LRU = 0;
 		//delete cache
-		for(i = 0; i < Page_size[ID]; i++){
+		for(i = 0; i < Page_size[ID]; i++){ // try all possible offset
 			int PA = min * Page_size[ID] + i;
 			int index = PA / C_block[ID] % C_row[ID];
 			int tag = PA / C_block[ID] / C_row[ID];
-			if(C_col[ID] == 1){
+			if(C_col[ID] == 1){ // direct map, use it directly
 				if(C[index][0][ID].tag == tag)
 					C[index][0][ID].valid = 0;
 			} else {
@@ -178,9 +176,8 @@ int check_PTE(int VPN, int ID){
 					}
 			}
 		}
-		
-		//update tlb and pte
-		P[VPN][ID].PPN = min; 
+		//update TLB and PTE
+		P[VPN][ID].PPN = min;
 		P[VPN][ID].valid = 1;
 		update_TLB(VPN, ID);
 		return P[VPN][ID].PPN;
@@ -190,9 +187,9 @@ int check_PTE(int VPN, int ID){
 void swap_MRU(int index, int ID, int swap){
 	int i;
 	for(i = 0; i < C_col[ID]; i++)
-		if(C[index][i][ID].MRU != 1)return;
+		if(C[index][i][ID].MRU != 1) return; // no need to swap
 	for(i = 0; i < C_col[ID]; i++)
-		C[index][i][ID].MRU = (i == swap) ? 1 : 0;
+		C[index][i][ID].MRU = (i == swap) ? 1 : 0; // swap
 }
 
 void print_cache(int ID){
@@ -209,10 +206,6 @@ void check_Cache(int PA, int VPN, int ID){
 	int index = PA / C_block[ID] % C_row[ID];
 	int tag = PA / C_block[ID] / C_row[ID];
 	int i;
-	/*if(!ID){
-		print_cache(ID);
-		printf("insert %d in %d, cycle = %d\n", tag, index, cycle);
-	}*/
 	for(i = 0; i < C_col[ID]; i++){
 		if(C[index][i][ID].valid == 1 && C[index][i][ID].tag == tag){ // hit
 			C[index][i][ID].MRU = 1;
@@ -222,17 +215,16 @@ void check_Cache(int PA, int VPN, int ID){
 		}
 	}
 	//miss
-	
 	C_miss[ID]++;
 	int swap = -1;
-	if(C_col[ID] == 1){ // special case (can't use bit pseudo lru)
+	if(C_col[ID] == 1){ // direct map (don't use bit pseudo lru)
 		C[index][0][ID].tag = tag;
 		C[index][0][ID].MRU = 1;
 		C[index][0][ID].valid = 1;
 		return;
 	}
 	
-	for(i = 0; i < C_col[ID]; i++){
+	for(i = 0; i < C_col[ID]; i++){ // use MRU
 		if(C[index][i][ID].valid == 0){
 			swap = i;
 			break;
@@ -249,9 +241,8 @@ void check_Cache(int PA, int VPN, int ID){
 }
 
 void vm(int VA, int ID){
-	//if(!ID)printf("%d\n", VA);
 	int VPN = VA / Page_size[ID];
-	int PPN = check_TLB(VPN, ID);
+	int PPN = check_TLB(VPN, ID); // trans VPN to PPN
 	int PA = PPN * Page_size[ID] + VA % Page_size[ID];
 	check_Cache(PA, VPN, ID);
 }
